@@ -59,6 +59,9 @@ class APIBase {
     active_symbols_promise: Promise<void> | null = null;
     common_store: CommonStore | undefined;
     landing_company: string | null = null;
+    // Exponential back-off state for reconnects
+    reconnect_delay: number = 1000;
+    reconnect_timer: ReturnType<typeof setTimeout> | null = null;
 
     unsubscribeAllSubscriptions = () => {
         this.current_auth_subscriptions?.forEach(subscription_promise => {
@@ -75,6 +78,12 @@ class APIBase {
 
     onsocketopen() {
         setConnectionStatus(CONNECTION_STATUS.OPENED);
+        // Reset back-off delay on a successful connection.
+        this.reconnect_delay = 1000;
+        if (this.reconnect_timer) {
+            clearTimeout(this.reconnect_timer);
+            this.reconnect_timer = null;
+        }
     }
 
     onsocketclose() {
@@ -150,9 +159,16 @@ class APIBase {
         // eslint-disable-next-line no-console
         console.log('connection state: ', this.api?.connection?.readyState);
         if (this.api?.connection?.readyState && this.api?.connection?.readyState > 1) {
+            // Guard: don't schedule a second reconnect while one is already pending.
+            if (this.reconnect_timer) return;
             // eslint-disable-next-line no-console
-            console.log('Info: Connection to the server was closed, trying to reconnect.');
-            this.init(true);
+            console.log(`Info: Connection closed, reconnecting in ${this.reconnect_delay}ms`);
+            this.reconnect_timer = setTimeout(() => {
+                this.reconnect_timer = null;
+                this.init(true);
+            }, this.reconnect_delay);
+            // Exponential back-off: 1 s → 2 s → 4 s → … capped at 30 s.
+            this.reconnect_delay = Math.min(this.reconnect_delay * 2, 30000);
         }
     };
 

@@ -191,6 +191,20 @@ const useTMB = (): UseTMBReturn => {
         // Create a new promise to determine the status
         tmbStatusPromiseRef.current = (async () => {
             try {
+                // TMB is Deriv's internal auth system — it only works on Deriv's own
+                // domains. On any third-party host (e.g. *.netlify.app) the OAuth
+                // endpoint enforces CORS and will reject credentialed requests, which
+                // always manifests as a "TypeError {}" in the browser console and
+                // blocks the loading chain. Skip the check entirely for non-Deriv hosts.
+                const derivDomains = ['deriv.com', 'deriv.dev', 'binary.sx', 'pages.dev', 'localhost', 'deriv.be', 'deriv.me'];
+                const hostDomain = window.location.hostname.split('.').slice(-2).join('.');
+                if (!derivDomains.includes(hostDomain)) {
+                    window.is_tmb_enabled = false;
+                    setIsTmbEnabled(false);
+                    tmbStatusDeterminedRef.current = true;
+                    return false;
+                }
+
                 // Check if we have a manually set value in localStorage
                 const storedValue = localStorage.getItem('is_tmb_enabled');
 
