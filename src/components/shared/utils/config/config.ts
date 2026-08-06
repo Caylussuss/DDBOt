@@ -83,6 +83,11 @@ export const getAppId = () => {
     const config_app_id = window.localStorage.getItem('config.app_id');
     const current_domain = getCurrentProductionDomain() ?? '';
 
+    // Environment variable takes highest priority — set APP_ID in Netlify environment variables
+    if (process.env.APP_ID) {
+        return process.env.APP_ID;
+    }
+
     if (config_app_id) {
         app_id = config_app_id;
     } else if (isStaging()) {

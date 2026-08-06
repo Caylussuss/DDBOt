@@ -5,6 +5,7 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--legacy-peer-deps"
+  # APP_ID = "<your_deriv_app_id>"   ← set this in the Netlify UI under Site → Environment variables
 
 # SPA fallback — required because the app uses react-router's
 # createBrowserRouter (client-side routing). Without this, any route

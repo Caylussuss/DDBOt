@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import Cookies from 'js-cookie';
 import { crypto_currencies_display_order, fiat_currencies_display_order } from '@/components/shared';
 import { generateDerivApiInstance } from '@/external/bot-skeleton/services/api/appId';
@@ -31,6 +32,12 @@ const getSelectedCurrency = (
 };
 
 const CallbackPage = () => {
+    // Call useTMB at the component level (not inside a callback) to comply with React hooks rules
+    const { is_tmb_enabled } = useTMB();
+    // Keep a ref so the async onSignInSuccess closure always reads the latest value
+    const isTmbEnabledRef = useRef(is_tmb_enabled);
+    isTmbEnabledRef.current = is_tmb_enabled;
+
     return (
         <Callback
             onSignInSuccess={async (tokens: Record<string, string>, rawState: unknown) => {
@@ -73,8 +80,7 @@ const CallbackPage = () => {
                             is_token_set = true;
 
                             // Only emit the InvalidToken event if logged_state is true
-                            const { is_tmb_enabled = false } = useTMB();
-                            if (Cookies.get('logged_state') === 'true' && !is_tmb_enabled) {
+                            if (Cookies.get('logged_state') === 'true' && !isTmbEnabledRef.current) {
                                 // Emit an event that can be caught by the application to retrigger OIDC authentication
                                 globalObserver.emit('InvalidToken', { error });
                             }
