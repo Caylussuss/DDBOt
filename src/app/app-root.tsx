@@ -34,6 +34,14 @@ const ErrorComponentWrapper = observer(() => {
     );
 });
 
+// Races a promise against a timeout; resolves with fallback if timeout fires first.
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
+    ]);
+}
+
 const AppRoot = () => {
     const store = useStore();
     const api_base_initialized = useRef(false);
@@ -42,11 +50,22 @@ const AppRoot = () => {
     const [, setIsTmbEnabled] = useState(false);
     const { isTmbEnabled } = useTMB();
 
+    // Top-level safety net: if the TMB check or API init stalls for any reason,
+    // unblock the app after 10 seconds so the loading spinner never hangs forever.
+    useEffect(() => {
+        const safetyTimeout = setTimeout(() => {
+            setIsTmbCheckComplete(true);
+            setIsApiInitialized(true);
+        }, 10000);
+        return () => clearTimeout(safetyTimeout);
+    }, []);
+
     // Effect to check TMB status - independent of API initialization
     useEffect(() => {
         const checkTmbStatus = async () => {
             try {
-                const tmb_status = await isTmbEnabled();
+                // Cap the Firebase fetch at 5 s so a network stall can't block the app forever.
+                const tmb_status = await withTimeout(isTmbEnabled(), 5000, false);
                 const final_status = tmb_status || window.is_tmb_enabled === true;
 
                 setIsTmbEnabled(final_status);

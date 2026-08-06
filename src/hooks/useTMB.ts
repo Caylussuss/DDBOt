@@ -68,6 +68,16 @@ const useTMB = (): UseTMBReturn => {
     const activeSessionsRef = useRef<TMBWebsocketTokens | undefined>(undefined);
 
     const getActiveSessions = useCallback(async (): Promise<TMBWebsocketTokens | undefined> => {
+        // Helper: fetch with an AbortController-based timeout so a stalled
+        // network request can never block the loading chain indefinitely.
+        const fetchWithTimeout = (url: string, timeoutMs: number, options?: RequestInit) => {
+            const controller = new AbortController();
+            const timerId = setTimeout(() => controller.abort(), timeoutMs);
+            return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+                clearTimeout(timerId)
+            );
+        };
+
         try {
             const configServerUrl = localStorage.getItem('config.server_url');
             if (configServerUrl) {
@@ -98,7 +108,7 @@ const useTMB = (): UseTMBReturn => {
                     console.log('Using config.server_url:', sessionsUrl);
                 }
 
-                const response = await fetch(sessionsUrl, {
+                const response = await fetchWithTimeout(sessionsUrl, 8000, {
                     method: 'GET',
                     credentials: 'include',
                     headers: {
@@ -124,7 +134,7 @@ const useTMB = (): UseTMBReturn => {
                 sessionsUrl = 'https://oauth.deriv.be/oauth2/sessions/active';
             }
 
-            const response = await fetch(sessionsUrl, {
+            const response = await fetchWithTimeout(sessionsUrl, 8000, {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
@@ -197,11 +207,16 @@ const useTMB = (): UseTMBReturn => {
                     return false;
                 }
 
-                // Otherwise, use the API value
+                // Otherwise, use the API value — use a timeout so a stalled
+                // Firebase request never blocks the loading chain indefinitely.
                 const url = is_staging
                     ? 'https://app-config-staging.firebaseio.com/remote_config/oauth/is_tmb_enabled.json'
                     : 'https://app-config-prod.firebaseio.com/remote_config/oauth/is_tmb_enabled.json';
-                const response = await fetch(url);
+                const controller = new AbortController();
+                const timerId = setTimeout(() => controller.abort(), 5000);
+                const response = await fetch(url, { signal: controller.signal }).finally(() =>
+                    clearTimeout(timerId)
+                );
                 const result = await response.json();
 
                 const isEnabled = !!result.dbot;
