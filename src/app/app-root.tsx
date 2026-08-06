@@ -34,84 +34,88 @@ const ErrorComponentWrapper = observer(() => {
     );
 });
 
-// Races a promise against a timeout; resolves with fallback if timeout fires first.
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
-    ]);
-}
-
 const AppRoot = () => {
     const store = useStore();
     const api_base_initialized = useRef(false);
-    const [is_api_initialized, setIsApiInitialized] = useState(false);
-    const [is_tmb_check_complete, setIsTmbCheckComplete] = useState(false);
-    const [, setIsTmbEnabled] = useState(false);
+    const [is_ready, setIsReady] = useState(false);
     const { isTmbEnabled } = useTMB();
 
-    // Top-level safety net: if the TMB check or API init stalls for any reason,
-    // unblock the app after 10 seconds so the loading spinner never hangs forever.
     useEffect(() => {
-        const safetyTimeout = setTimeout(() => {
-            setIsTmbCheckComplete(true);
-            setIsApiInitialized(true);
-        }, 10000);
-        return () => clearTimeout(safetyTimeout);
-    }, []);
+        let cancelled = false;
 
-    // Effect to check TMB status - independent of API initialization
-    useEffect(() => {
-        const checkTmbStatus = async () => {
-            try {
-                // Cap the Firebase fetch at 5 s so a network stall can't block the app forever.
-                const tmb_status = await withTimeout(isTmbEnabled(), 5000, false);
-                const final_status = tmb_status || window.is_tmb_enabled === true;
+        // Hard cap: never block the user for more than 4 seconds total,
+        // regardless of what external services do.
+        const hard_limit = setTimeout(() => {
+            if (!cancelled) setIsReady(true);
+        }, 4000);
 
-                setIsTmbEnabled(final_status);
+        const run = async () => {
+            // Run TMB check and API init in PARALLEL — neither blocks the other.
+            // TMB check is capped at 2 s; if Firebase is unreachable the app
+            // falls back to is_tmb_enabled=false and continues immediately.
+            const tmbCheck = (async () => {
+                try {
+                    const controller = new AbortController();
+                    const tid = setTimeout(() => controller.abort(), 2000);
+                    const url = window.location.hostname.includes('staging')
+                        ? 'https://app-config-staging.firebaseio.com/remote_config/oauth/is_tmb_enabled.json'
+                        : 'https://app-config-prod.firebaseio.com/remote_config/oauth/is_tmb_enabled.json';
 
-                setIsTmbCheckComplete(true);
-            } catch (error) {
-                console.error('TMB check failed:', error);
-                setIsTmbCheckComplete(true);
-            }
-        };
+                    // Honor localStorage override before hitting the network.
+                    const stored = localStorage.getItem('is_tmb_enabled');
+                    if (stored === 'true') {
+                        clearTimeout(tid);
+                        window.is_tmb_enabled = true;
+                        return;
+                    } else if (stored === 'false') {
+                        clearTimeout(tid);
+                        window.is_tmb_enabled = false;
+                        return;
+                    }
 
-        checkTmbStatus();
-    }, []);
+                    // Also try isTmbEnabled() from the hook (uses cached promise if already in-flight).
+                    await Promise.race([
+                        isTmbEnabled(),
+                        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2000)),
+                    ]);
+                    clearTimeout(tid);
+                } catch {
+                    // TMB unavailable — default to disabled; app continues normally.
+                    window.is_tmb_enabled = false;
+                }
+            })();
 
-    // Initialize API when TMB check is complete with timeout fallback
-    useEffect(() => {
-        if (!is_tmb_check_complete) {
-            return; // Wait until TMB check is complete
-        }
-
-        const timeoutId = setTimeout(() => {
-            if (!is_api_initialized) {
-                setIsApiInitialized(true);
-            }
-        }, 5000);
-
-        const initializeApi = async () => {
-            if (!api_base_initialized.current) {
+            const apiInit = (async () => {
+                if (api_base_initialized.current) return;
                 try {
                     await api_base.init();
                     api_base_initialized.current = true;
-                } catch (error) {
-                    console.error('API initialization failed:', error);
-                    api_base_initialized.current = false;
-                } finally {
-                    setIsApiInitialized(true);
-                    clearTimeout(timeoutId); // Clear timeout if API init completes
+                } catch {
+                    // API init failed — app still renders; connection retries handle recovery.
                 }
+            })();
+
+            // Wait for whichever finishes last, but no longer than 3 s combined.
+            await Promise.race([
+                Promise.all([tmbCheck, apiInit]),
+                new Promise<void>(resolve => setTimeout(resolve, 3000)),
+            ]);
+
+            if (!cancelled) {
+                clearTimeout(hard_limit);
+                setIsReady(true);
             }
         };
 
-        initializeApi();
-        return () => clearTimeout(timeoutId);
-    }, [is_tmb_check_complete]);
+        run();
 
-    if (!store || !is_api_initialized) return <AppRootLoader />;
+        return () => {
+            cancelled = true;
+            clearTimeout(hard_limit);
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (!store || !is_ready) return <AppRootLoader />;
 
     return (
         <Suspense fallback={<AppRootLoader />}>

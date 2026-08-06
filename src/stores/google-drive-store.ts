@@ -97,6 +97,9 @@ export default class GoogleDriveStore {
     };
 
     initialiseClient = () => {
+        // Skip Google Drive setup if the app ID is not configured — avoids the
+        // "Missing required parameter client_id" console error at startup.
+        if (!this.client_id) return;
         this.client = google.accounts.oauth2.initTokenClient({
             client_id: this.client_id,
             scope: this.scope,
